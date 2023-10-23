@@ -10,19 +10,22 @@ import (
 	"log"
 	"math"
 	"net/http"
-	"paddleocr-go/paddle"
+
+	// "paddleocr-go/paddle"
 	"path"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	paddle "github.com/paddlepaddle/paddle/paddle/fluid/inference/goapi"
 
 	"github.com/LKKlein/gocv"
 )
 
 type PaddleModel struct {
 	predictor *paddle.Predictor
-	input     *paddle.ZeroCopyTensor
-	outputs   []*paddle.ZeroCopyTensor
+	input     *paddle.Tensor
+	output    *paddle.Tensor
 
 	useGPU      bool
 	deviceID    int
@@ -46,17 +49,16 @@ func NewPaddleModel(args map[string]interface{}) *PaddleModel {
 }
 
 func (model *PaddleModel) LoadModel(modelDir string) {
-	config := paddle.NewAnalysisConfig()
-	config.DisableGlogInfo()
+	config := paddle.NewConfig()
+	// config.DisableGlogInfo()
 
-	config.SetModel(modelDir+"/model", modelDir+"/params")
+	config.SetModel(modelDir+"/inference.pdmodel", modelDir+"/inference.pdiparams")
 	if model.useGPU {
-		config.EnableUseGpu(model.initGPUMem, model.deviceID)
+		config.EnableUseGpu(uint64(model.initGPUMem), int32(model.deviceID))
 	} else {
-		config.DisableGpu()
 		config.SetCpuMathLibraryNumThreads(model.numThreads)
 		if model.useMKLDNN {
-			config.EnableMkldnn()
+			config.EnableMKLDNN()
 		}
 	}
 
@@ -66,12 +68,15 @@ func (model *PaddleModel) LoadModel(modelDir string) {
 	}
 
 	// false for zero copy tensor
-	config.SwitchUseFeedFetchOps(false)
-	config.SwitchSpecifyInputNames(true)
+	// config.SwitchUseFeedFetchOps(false)
+	// config.SwitchSpecifyInputNames(true)
 
 	model.predictor = paddle.NewPredictor(config)
-	model.input = model.predictor.GetInputTensors()[0]
-	model.outputs = model.predictor.GetOutputTensors()
+	inputNames := model.predictor.GetInputNames()
+	model.input = model.predictor.GetInputHandle(inputNames[0])
+
+	outputNames := model.predictor.GetOutputNames()
+	model.output = model.predictor.GetOutputHandle(outputNames[0])
 }
 
 type OCRText struct {

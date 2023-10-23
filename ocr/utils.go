@@ -36,6 +36,20 @@ func getInt(args map[string]interface{}, key string, dv int) int {
 	return dv
 }
 
+func getInt32(args map[string]interface{}, key string, dv int32) int32 {
+	if i, ok := args[key]; ok {
+		return i.(int32)
+	}
+	return dv
+}
+
+func getUInt64(args map[string]interface{}, key string, dv uint64) uint64 {
+	if i, ok := args[key]; ok {
+		return i.(uint64)
+	}
+	return dv
+}
+
 func getBool(args map[string]interface{}, key string, dv bool) bool {
 	if b, ok := args[key]; ok {
 		return b.(bool)
@@ -113,7 +127,7 @@ func argmax(arr []float32) (int, float32) {
 }
 
 func checkModelExists(modelPath string) bool {
-	if isPathExist(modelPath+"/model") && isPathExist(modelPath+"/params") {
+	if isPathExist(modelPath+"/inference.pdmodel") && isPathExist(modelPath+"/inference.pdiparams") {
 		return true
 	}
 	if strings.HasPrefix(modelPath, "http://") ||
@@ -278,4 +292,12 @@ func convertYaml2Map(i interface{}) interface{} {
 		}
 	}
 	return i
+}
+
+func numElements(shape []int32) int32 {
+	n := int32(1)
+	for _, v := range shape {
+		n *= v
+	}
+	return n
 }

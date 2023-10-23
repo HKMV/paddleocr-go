@@ -1,11 +1,19 @@
 package ocr
 
 import (
+	"bytes"
+	"encoding/binary"
 	"image"
 	"image/color"
 	"math"
-	"paddleocr-go/paddle"
+	"reflect"
+	"unsafe"
+
+	// "paddleocr-go/paddle"
+
 	"sort"
+
+	paddle "github.com/paddlepaddle/paddle/paddle/fluid/inference/goapi"
 
 	"github.com/LKKlein/gocv"
 	clipper "github.com/ctessum/go.clipper"
@@ -24,7 +32,7 @@ func (a xIntSortBy) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a xIntSortBy) Less(i, j int) bool { return a[i][0] < a[j][0] }
 
 type DetPostProcess interface {
-	Run(output *paddle.ZeroCopyTensor, oriH, oriW int, ratioH, ratioW float64) [][][]int
+	Run(output *paddle.Tensor, oriH, oriW int, ratioH, ratioW float64) [][][]int
 }
 
 type DBPostProcess struct {
@@ -235,23 +243,23 @@ func (d *DBPostProcess) filterTagDetRes(boxes [][][]int, oriH, oriW int) [][][]i
 	return points
 }
 
-func (d *DBPostProcess) Run(output *paddle.ZeroCopyTensor, oriH, oriW int, ratioH, ratioW float64) [][][]int {
-	v := output.Value().([][][][]float32)
-
+func (d *DBPostProcess) Run(output *paddle.Tensor, oriH, oriW int, ratioH, ratioW float64) [][][]int {
+	// v := getTensorValue(output).([][][][]float32)
 	shape := output.Shape()
 	height, width := int(shape[2]), int(shape[3])
-
+	// n := width * height
+	n := numElements(shape)
+	data := make([]float32, n)
+	output.CopyToCpu(data)
 	pred := gocv.NewMatWithSize(height, width, gocv.MatTypeCV32F)
 	bitmap := gocv.NewMatWithSize(height, width, gocv.MatTypeCV8UC1)
 	thresh := float32(d.thresh)
-	for i := 0; i < height; i++ {
-		for j := 0; j < width; j++ {
-			pred.SetFloatAt(i, j, v[0][0][i][j])
-			if v[0][0][i][j] > thresh {
-				bitmap.SetUCharAt(i, j, 1)
-			} else {
-				bitmap.SetUCharAt(i, j, 0)
-			}
+	for i := range data {
+		pred.AddFloat(data[i])
+		if data[i] > thresh {
+			bitmap.AddUChar(uint8(1))
+		} else {
+			bitmap.AddUChar(uint8(0))
 		}
 	}
 
@@ -261,4 +269,84 @@ func (d *DBPostProcess) Run(output *paddle.ZeroCopyTensor, oriH, oriW int, ratio
 	boxes := d.boxesFromBitmap(pred, mask, ratioH, ratioW)
 	dtboxes := d.filterTagDetRes(boxes, oriH, oriW)
 	return dtboxes
+}
+
+var types = []struct {
+	gotype reflect.Type
+	dtype  paddle.DataType
+}{
+	{reflect.TypeOf(float32(0)), paddle.Float32},
+	{reflect.TypeOf(int32(0)), paddle.Int32},
+	{reflect.TypeOf(int64(0)), paddle.Int64},
+	{reflect.TypeOf(int8(0)), paddle.Int8},
+	{reflect.TypeOf(uint8(0)), paddle.Uint8},
+}
+
+func TypeOf(dtype paddle.DataType, shape []int32) reflect.Type {
+	var ret reflect.Type
+	for _, t := range types {
+		if t.dtype == dtype {
+			ret = t.gotype
+			break
+		}
+	}
+
+	for range shape {
+		ret = reflect.SliceOf(ret)
+	}
+	return ret
+}
+
+// func getTensorValue(tensor *paddle.Tensor) interface{} {
+// 	c_bytes := tensor.c.data.data
+// 	length := tensor.c.data.length
+// 	var slice []byte
+// 	if unsafe.Sizeof(unsafe.Pointer(nil)) == 8 {
+// 		slice = (*[1<<50 - 1]byte)(unsafe.Pointer(c_bytes))[:length:length]
+// 	} else {
+// 		slice = (*[1 << 30]byte)(unsafe.Pointer(c_bytes))[:length:length]
+// 	}
+// 	r := bytes.NewReader(slice)
+// 	t := TypeOf(tensor.Type(), tensor.Shape())
+// 	value := reflect.New(t)
+// 	DecodeTensor(r, tensor.Shape(), t, value)
+// 	return reflect.Indirect(value).Interface()
+// }
+
+func Endian() binary.ByteOrder {
+	buf := [2]byte{}
+	*(*uint16)(unsafe.Pointer(&buf[0])) = uint16(0xABCD)
+
+	var endian binary.ByteOrder
+
+	switch buf {
+	case [2]byte{0xCD, 0xAB}:
+		endian = binary.LittleEndian
+	case [2]byte{0xAB, 0xCD}:
+		endian = binary.BigEndian
+	default:
+		panic("Could not determine native endianness.")
+	}
+	return endian
+}
+
+func DecodeTensor(r *bytes.Reader, shape []int32, t reflect.Type, ptr reflect.Value) {
+	switch t.Kind() {
+	case reflect.Uint8, reflect.Int32, reflect.Int64, reflect.Float32:
+		binary.Read(r, Endian(), ptr.Interface())
+	case reflect.Slice:
+		value := reflect.Indirect(ptr)
+		value.Set(reflect.MakeSlice(t, int(shape[0]), int(shape[0])))
+		if len(shape) == 1 && value.Len() > 0 {
+			switch value.Index(0).Kind() {
+			case reflect.Uint8, reflect.Int32, reflect.Int64, reflect.Float32:
+				binary.Read(r, Endian(), value.Interface())
+				return
+			}
+		}
+
+		for i := 0; i < value.Len(); i++ {
+			DecodeTensor(r, shape[1:], t.Elem(), value.Index(i).Addr())
+		}
+	}
 }

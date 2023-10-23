@@ -17,7 +17,7 @@ var (
 
 func init() {
 	flag.StringVar(&confFile, "config", "config/conf.yaml", "config from ocr system. If not given, will use default config.")
-	flag.StringVar(&image, "image", "", "image to predict. if not given, will use image_dir")
+	flag.StringVar(&image, "image", "images/0.jpg", "image to predict. if not given, will use image_dir")
 	flag.StringVar(&imageDir, "image_dir", "", "imgs in dir to be predicted. if not given, will check servering")
 	flag.BoolVar(&useServering, "use_servering", false, "whether to use ocr server. [default: false]")
 	flag.StringVar(&port, "port", "18600", "which port to serve ocr server. [default: 18600].")
@@ -29,6 +29,9 @@ func main() {
 
 	if image != "" {
 		img := ocr.ReadImage(image)
+		// w := gocv.NewWindow("wind")
+		// w.IMShow(img)
+		// w.WaitKey(0)
 		results := sys.PredictOneImage(img)
 		for _, res := range results {
 			log.Println(res)
